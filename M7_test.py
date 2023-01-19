@@ -7,9 +7,9 @@ import matplotlib.pyplot as plt
 #DOMAIN GEN and loading parameters 
 #################################################################
 split=True
-n_dim = 2 #number of dims in domain 
+n_dim = 2 #number of dims in domain
 n_mp = 360 #number of microplanes in interpolation 
-n_step = 100000 #solver steps
+n_step = 5 #solver steps
 zita=np.zeros(n_step) #fatigue par
 fzita=np.ones_like(zita)
 tagdisp= 0.01
@@ -35,9 +35,9 @@ class IntegScheme():
     MPM = np.zeros_like(MPN)
     delta= np.identity(n_dim) 
     MPNN_nij = np.einsum('ni,nj -> nij', MPN,MPN)
-   #MPTT_nijr = 0.5*(np.einsum('ni,jr -> nijr',MPN,delta)
-   #                +np.einsum('nj,ir ->njir',MPN,delta)
-   #                -2*np.einsum('ni,nj,nr ->nijr',MPN,MPN,MPN))
+    MPTT_nijr = 0.5*(np.einsum('ni,jr -> nijr',MPN,delta)
+                  +np.einsum('nj,ir ->njir',MPN,delta)
+                  -2*np.einsum('ni,nj,nr ->nijr',MPN,MPN,MPN))
     NPM=np.zeros_like(MPN)
 #################################################################
 #DISPS AND INCEMENTS
@@ -46,7 +46,7 @@ class IntegScheme():
 if split==True :
     e_N = np.einsum('nij,...ij->...n',IntegScheme.MPNN_nij,epsilon_ij)
     de_n= np.einsum('...nij,...ij->...n',IntegScheme.MPNN_nij,de_ij)
-    #MPTT_ijr =  IntegScheme.MPTT_nijr 
+    MPTT_ijr =  IntegScheme.MPTT_nijr
     e_V_norm = np.einsum('...ij,...ij->...',delta, epsilon_ij)/3
     de_v_norm = np.einsum('...ij,...ij->...',delta, de_ij)/3
     e_V = np.einsum('ij,i->ij', np.ones_like(e_N), e_V_norm)
@@ -54,10 +54,10 @@ if split==True :
     e_D = e_N - e_V
     de_d=de_n-de_v
     MPN = IntegScheme.MPN
-    #e_T_r=np.einsum('nija,...ij->...na',MPTT_ijr,epsilon_ij)
-    e_T_r=epsilon_ij-np.einsum('...nij,...ij->...n',e_N,IntegScheme.MPN)
-    #de_tr=np.einsum('...nija,...ij->...na',MPTT_ijr,de_ij)
-    de_tr=de_ij-np.einsum('...nij,...ij->...n',de_n,IntegScheme.MPN)
+    e_T_r=np.linalg.norm(np.einsum('nija,...ij->...na',MPTT_ijr,epsilon_ij), axis =-1)
+    # e_T_r = epsilon_ij - np.einsum('...nij,...ij->...n',e_N,IntegScheme.MPN)
+    de_tr=np.linalg.norm(np.einsum('...nija,...ij->...na',MPTT_ijr,de_ij), axis =-1)
+    # de_tr=de_ij-np.einsum('...nij,...ij->...n',de_n,IntegScheme.MPN)
 else:
     e_N = np.einsum('nij,...ij->...n',IntegScheme.MPNN_nij,epsilon_ij)
     MPTT_ijr =  IntegScheme.MPTT_nijr 
@@ -144,12 +144,12 @@ e_elastic=np.zeros_like(E_N)
 K_b=np.ones(len(epsilon_11))
 k_b=E_modulus*K_b
 #loop over each time step
-for j in range(n_step): 
+for j in range(1,n_step):
     #loop over each microplane
     for i in range(n_mp):
-        zita[j]=zita[j-1]+dzita
-        epsI = np.max(np.linalg.eig(epsilon_ij[i])[0])
-        epsII = np.min(np.linalg.eig(epsilon_ij[i])[0])
+        zita[j]=zita[j-1]#+dzita
+        epsI = np.max(np.linalg.eig(epsilon_ij[j])[0])
+        epsII = np.min(np.linalg.eig(epsilon_ij[j])[0])
         if j>0:
             e_elastic[j][i] = np.max([-s_V[j-1][i]/E_N[j-1][i], 0])
         else:
@@ -160,10 +160,14 @@ for j in range(n_step):
         ##########################################################
         #volumentric boundary Eq. 12 - 14
         ##########################################################
-        de_v[j][i] = e_V[j][i] - e_V[j-1][i] # delta volumetric strain
-        a=(k_5/(1+np.min([-s_V[j-1][i],c_21])/E_N[j-1][i]))*((epsI-epsII)/k_1)**(c_20)+k_4
+        de_v[j-1][i] = e_V[j][i] - e_V[j-1][i] # delta volumetric strain
+        if s_V[j-1][i] == 0.0:
+            a = k_5 * ((epsI - epsII) / k_1) ** (c_20) + k_4
+        else:
+            a = (k_5 / (1 + np.min([-s_V[j - 1][i], c_21]) / E_N[j - 1][i])) * ((epsI - epsII) / k_1) ** (c_20) + k_4
+
         s_V_bound[j][i]=-E_mod[j][i]*k_1*k_3*np.exp(-e_V[j][i]/(k_1*a))
-        s_V[j][i] = s_V[j-1][i] + E_mod[j][i]* de_v[j][i]
+        s_V[j][i] = s_V[j-1][i] + E_mod[j][i]* de_v[j-1][i]
         if s_V[j][i] > s_V_bound[j][i]:
             s_V[j][i] = s_V_bound[j][i]  
         ##########################################################
@@ -186,16 +190,16 @@ for j in range(n_step):
         ##########################################################
         #Normal boundary Eq. 19 - 24
         ##########################################################
-        de_n[j][i]= e_N[j][i] - e_N[j-1][i]
+        de_n[j-1][i]= e_N[j][i] - e_N[j-1][i]
         if s_N[j-1][i]>=0:      #Compression
-            if de_n[j][i] > 0:
-                fzita[i]=1+r_of_zita*zita[i]**q_of_zita(r_of_zita**2)*(zita[i]**(2*q_of_zita))
-                E_N[j][i]=E_N[j-1][i]*np.exp(-c_13*e_0Nplus[i])*(fzita[i])**-1
-            elif s_N[j-1][i]>E_N[j-1][i] and s_N[j-1][i]*de_n[j][i]<0:
+            if de_n[j-1][i] > 0:
+                fzita[j]=1+r_of_zita*zita[j]**q_of_zita+(r_of_zita**2)*(zita[j]**(2*q_of_zita))
+                E_N[j][i]=E_N[j-1][i]*np.exp(-c_13*e_0Nplus[i])*(fzita[j])**-1
+            elif s_N[j-1][i]>E_N[j-1][i] and s_N[j-1][i]*de_n[j-1][i]<0:
                 E_N [j][i]= E_N[j-1][i]
         else:
             E_N[j][i]=E_N[j-1][i]*(np.exp(-c_14*np.abs(e_0Nminus[i])/(1+c_15*e_elastic[j][i]))+c_16*e_elastic[j][i])    
-        s_N[j][i] = s_N[j-1][i] + E_N [j][i]* de_n[j][i]
+        s_N[j][i] = s_N[j-1][i] + E_N [j][i]* de_n[j-1][i]
         E_mod[j][i]=(1-2*n_poisson)*E_N[j][i]
         if s_N[j][i] > 0:
             bita_1=-c_1+c_17*np.exp(-c_19*(-s_V[j-1][i]-c_18)/E_N[j-1][i])
@@ -213,13 +217,14 @@ for j in range(n_step):
             s_T_bound[j][i]=(c_10*(s_Ndot[j][i]-s_N[j][i])**(-1)+(E_T[j][i]*k_1-k_2)**(-1))**(-1)
         else:
             s_T_bound[j][i]=(c_10*s_Ndot[j][i]**(-1)+(E_T[j][i]*k_1-k_2)**(-1))**(-1)
-            s_T_elastic[j][i]=s_T[j-1][i] +E_T[j][i]*de_tr[j][i]
-            s_T[j][i]=np.minimum(s_T_bound[j][i],np.abs(s_T_elastic[i]))
-            s_T[j][i]=(s_T[j-1][i]+E_T[j][i]*de_tr[j][i])*s_T[j][i]/s_T_elastic[j][i]
-    s_V[j,:]=np.einsum('...i,i',s_N,IntegScheme.MPW)
-    K_b[j]=(2/3)*np.einsum("n,...i",IntegScheme.MPW,E_N[j,:])
-    de_vel[j][i]=(s_V[j][i]-s_V[j=1][i])*K_b**-1
-    dzita=de_v-de_vel
+            s_T_elastic[j][i]=s_T[j-1][i] +E_T[j][i]*de_tr[j-1][i]
+            s_T[j][i]=np.minimum(s_T_bound[j][i],np.abs(s_T_elastic[j][i]))
+            s_T[j][i]=(s_T[j-1][i]+E_T[j][i]*de_tr[j-1][i])*s_T[j][i]/s_T_elastic[j][i]
+    s_V[j,:]=np.einsum('...i,i',s_N[j],IntegScheme.MPW)
+    K_b[j]=(2/3)*np.einsum("...n,...n->...",IntegScheme.MPW,E_N[j])
+    if (s_V[j][i]-s_V[j][i]) > 1e-20:
+        de_vel[j-1][i]=(s_V[j][i]-s_V[j][i])*K_b[j]**-1
+    # dzita[j][i]=de_v[j][i]-de_vel[j][i]
  
 
 # if split==True:
