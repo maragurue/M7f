@@ -7,11 +7,11 @@ import matplotlib.pyplot as plt
 #DOMAIN GEN and loading parameters 
 #################################################################
 split=True
-n_dim = 2 #number of dims in domain 
-n_mp = 360 #number of microplanes in interpolation 
-zita=np.zeros(n_mp) #fatigue par
+n_dim = 2 #number of dims in domain
+n_mp = 4 #number of microplanes in interpolation 
+n_step = 4 #solver steps
+zita=np.zeros(n_step) #fatigue par
 fzita=np.ones_like(zita)
-n_step = 100000 #solver steps
 tagdisp= 0.01
 #ratio=step of defining actual domain
 delta = np.identity(n_dim) #Kronecker δij
@@ -35,9 +35,9 @@ class IntegScheme():
     MPM = np.zeros_like(MPN)
     delta= np.identity(n_dim) 
     MPNN_nij = np.einsum('ni,nj -> nij', MPN,MPN)
-   #MPTT_nijr = 0.5*(np.einsum('ni,jr -> nijr',MPN,delta)
-   #                +np.einsum('nj,ir ->njir',MPN,delta)
-   #                -2*np.einsum('ni,nj,nr ->nijr',MPN,MPN,MPN))
+    MPTT_nijr = 0.5*(np.einsum('ni,jr -> nijr',MPN,delta)
+                  +np.einsum('nj,ir ->njir',MPN,delta)
+                  -2*np.einsum('ni,nj,nr ->nijr',MPN,MPN,MPN))
     NPM=np.zeros_like(MPN)
 #################################################################
 #DISPS AND INCEMENTS
@@ -46,7 +46,7 @@ class IntegScheme():
 if split==True :
     e_N = np.einsum('nij,...ij->...n',IntegScheme.MPNN_nij,epsilon_ij)
     de_n= np.einsum('...nij,...ij->...n',IntegScheme.MPNN_nij,de_ij)
-    #MPTT_ijr =  IntegScheme.MPTT_nijr 
+    MPTT_ijr =  IntegScheme.MPTT_nijr
     e_V_norm = np.einsum('...ij,...ij->...',delta, epsilon_ij)/3
     de_v_norm = np.einsum('...ij,...ij->...',delta, de_ij)/3
     e_V = np.einsum('ij,i->ij', np.ones_like(e_N), e_V_norm)
@@ -54,10 +54,10 @@ if split==True :
     e_D = e_N - e_V
     de_d=de_n-de_v
     MPN = IntegScheme.MPN
-    #e_T_r=np.einsum('nija,...ij->...na',MPTT_ijr,epsilon_ij)
-    e_T_r=epsilon_ij-np.einsum('...nij,...ij->...n',e_N,IntegScheme.MPN)
-    #de_tr=np.einsum('...nija,...ij->...na',MPTT_ijr,de_ij)
-    de_tr=de_ij-np.einsum('...nij,...ij->...n',de_n,IntegScheme.MPN)
+    e_T_r=np.linalg.norm(np.einsum('nija,...ij->...na',MPTT_ijr,epsilon_ij), axis =-1)
+    # e_T_r = epsilon_ij - np.einsum('...nij,...ij->...n',e_N,IntegScheme.MPN)
+    de_tr=np.linalg.norm(np.einsum('...nija,...ij->...na',MPTT_ijr,de_ij), axis =-1)
+    # de_tr=de_ij-np.einsum('...nij,...ij->...n',de_n,IntegScheme.MPN)
 else:
     e_N = np.einsum('nij,...ij->...n',IntegScheme.MPNN_nij,epsilon_ij)
     MPTT_ijr =  IntegScheme.MPTT_nijr 
@@ -81,13 +81,9 @@ else:
     G_11 =G+G_1
     n_pseudopoisson=(3*K*(1+G/G_1)-2*G)/(6*K_1*(1+G/G_1)+2*G)
     n_poisson=n_pseudopoisson
-E_N=np.ones((len(epsilon_11),n_mp)) #initialazation of Elasticity modulus 
-E_T=np.ones_like(e_N) #initialazation of Elasticity modulus 
-E_mod=np.ones_like(E_N)
-E_mod=np.multiply(E_mod,E_modulus)
-E_N[0,:] = E_modulus/(1-2*n_poisson)
-E_T[0,:] = E_N[0,:]*((1-4*n_poisson)/(1+n_poisson))
-xo=1#for double constraint
+E_N=np.ones((len(epsilon_11),n_mp))*E_modulus/(1-2*n_poisson)
+E_T=np.ones_like(e_N)*E_modulus/(1-2*n_poisson)*((1-4*n_poisson)/(1+n_poisson)) #initialazation of Elasticity modulus 
+E_mod=np.ones_like(E_N)*E_modulus
 ################################################################
 #PARAMETERS AND INITIALASATION
 ################################################################
@@ -127,27 +123,33 @@ c_18= 1.6*10**-3   # Controls the tensile cracking under compression
 c_19= 1000         # Controls the tensile softening rate induced by compression
 c_20= 1.8          # Controls the volumetric-deviatoric coupling at high pressures
 c_21=250
+nomva=1e-20
 e_0Nplus=np.zeros(n_mp)
 e_0Nminus=np.zeros(n_mp)
-s_T_elastic=np.zeros((n_step,n_mp))
-s_D_bound=np.zeros((n_step,n_mp))
-s_N_bound=np.zeros((n_step,n_mp))
-s_V_bound=np.zeros((n_step,n_mp))
-s_T_bound=np.zeros((n_step,n_mp))
+s_T_elastic=np.ones((n_step,n_mp))*nomva
+
+s_D_bound=np.ones((n_step,n_mp))*nomva
+s_N_bound=np.ones((n_step,n_mp))*nomva
+s_V_bound=np.ones((n_step,n_mp))*nomva
+s_T_bound=np.ones((n_step,n_mp))*nomva
+zita=np.zeros_like(E_N)
+fzita=np.zeros_like(E_N)
+dzita=np.zeros_like(E_N)
+de_vel=np.zeros_like((n_step,n_mp))
 s_N=np.ones_like(E_N)
-s_Ndot=np.ones_like(E_N)
-s_V=np.ones_like(E_N)
-s_D=np.ones_like(E_N)
-s_T=np.ones_like(E_N)
+s_Ndot=np.ones_like(E_N)*nomva
+s_V=np.ones_like(E_N)*nomva
+s_D=np.ones_like(E_N)*nomva
+s_T=np.ones_like(E_N)*nomva
 e_elastic=np.zeros_like(E_N)
-K_b=np.ones(len(epsilon_11))
-k_b=E_modulus*K_b
+K_b=np.ones(len(epsilon_11))*E_modulus
 #loop over each time step
-for j in range(n_step): 
+for j in range(1,n_step):
     #loop over each microplane
     for i in range(n_mp):
-        epsI = np.max(np.linalg.eig(epsilon_ij[i])[0])
-        epsII = np.min(np.linalg.eig(epsilon_ij[i])[0])
+        zita[j][i]=zita[j-1][i]+dzita[j][i]
+        epsI = np.max(np.linalg.eig(epsilon_ij[j])[0])
+        epsII = np.min(np.linalg.eig(epsilon_ij[j])[0])
         if j>0:
             e_elastic[j][i] = np.max([-s_V[j-1][i]/E_N[j-1][i], 0])
         else:
@@ -158,10 +160,14 @@ for j in range(n_step):
         ##########################################################
         #volumentric boundary Eq. 12 - 14
         ##########################################################
-        de_v[j][i] = e_V[j][i] - e_V[j-1][i] # delta volumetric strain
-        a=(k_5/(1+np.min([-s_V[j-1][i],c_21])/E_N[j-1][i]))*((epsI-epsII)/k_1)**(c_20)+k_4
+        de_v[j-1][i] = e_V[j][i] - e_V[j-1][i] # delta volumetric strain
+        if s_V[j-1][i] == 0.0:
+            a = k_5 * ((epsI - epsII) / k_1) ** (c_20) + k_4
+        else:
+            a = (k_5 / (1 + np.min([-s_V[j - 1][i], c_21]) / E_N[j - 1][i])) * ((epsI - epsII) / k_1) ** (c_20) + k_4
+
         s_V_bound[j][i]=-E_mod[j][i]*k_1*k_3*np.exp(-e_V[j][i]/(k_1*a))
-        s_V[j][i] = s_V[j-1][i] + E_mod[j][i]* de_v[j][i]
+        s_V[j][i] = s_V[j-1][i] + E_mod[j][i]* de_v[j-1][i]
         if s_V[j][i] > s_V_bound[j][i]:
             s_V[j][i] = s_V_bound[j][i]  
         ##########################################################
@@ -170,8 +176,14 @@ for j in range(n_step):
         # predictor for compressive deviatoric stress
         s_D[j][i] = E_mod[j][i] * e_D[j][i]
         # obtaining deviatoric compressive strain boundary (threshold)
-        gama_0=f_c0dot/E_mod[j-1][i]+f_cdot/E_mod[j][i]
-        gama_1=np.exp(gama_0)*np.tanh(c_9*(-e_V[j][i])/k_1)
+        if E_mod[j-1][i]==0:
+            gama_0=f_cdot/E_mod[j][i]
+        else :
+            gama_0=f_c0dot/E_mod[j-1][i]+f_cdot/E_mod[j][i]
+        if e_V[j-1][i] == 0.0:
+            gama_1=0
+        else:
+            gama_1=np.exp(gama_0)*(np.tanh(c_9*(-e_V[j][i])/k_1))
         bita_2=c_5*gama_1+c_7
         bita_3=c_6*gama_1+c_8
         s_D_bound[j][i]=E_mod[j][i]*k_1*bita_3/(1+6*((-e_D[j][i])/k_1*bita_2)**2)
@@ -184,18 +196,22 @@ for j in range(n_step):
         ##########################################################
         #Normal boundary Eq. 19 - 24
         ##########################################################
-        de_n[j][i]= e_N[j][i] - e_N[j-1][i]
+        de_n[j-1][i]= e_N[j][i] - e_N[j-1][i]
         if s_N[j-1][i]>=0:      #Compression
-            if de_n[j][i] > 0:
-                fzita[i]=1+r_of_zita*zita[i]**q_of_zita(r_of_zita**2)*(zita[i]**(2*q_of_zita))
-                E_N[j][i]=E_N[j-1][i]*np.exp(-c_13*e_0Nplus[i])*(fzita[i])**-1
-            elif s_N[j-1][i]>E_N[j-1][i]:
+            if de_n[j-1][i] > 0:
+                fzita[j][i]=1+r_of_zita*zita[j][i]**q_of_zita+(r_of_zita**2)*(zita[j][i]**(2*q_of_zita))
+                E_N[j][i]=E_N[j-1][i]*np.exp(-c_13*e_0Nplus[i])*(fzita[j][i])**-1
+            elif s_N[j-1][i]>E_N[j-1][i] and s_N[j-1][i]*de_n[j-1][i]<0:
                 E_N [j][i]= E_N[j-1][i]
         else:
             E_N[j][i]=E_N[j-1][i]*(np.exp(-c_14*np.abs(e_0Nminus[i])/(1+c_15*e_elastic[j][i]))+c_16*e_elastic[j][i])    
-        s_N[j][i] = s_N[j-1][i] + E_N [j][i]* de_n[j][i]
-        if s_N[j][i] > 0:
-            bita_1=-c_1+c_17*np.exp(-c_19*(-s_V[j-1][i]-c_18)/E_N[j-1][i])
+        s_N[j][i] = s_N[j-1][i] + E_N [j][i]* de_n[j-1][i]
+        E_mod[j][i]=(1-2*n_poisson)*E_N[j][i]
+        if s_N[j][i] > 0 :
+            if s_V[j-1][i]==0:
+                bita_1=-c_1+c_17*np.exp(-c_19*(-c_18)/E_N[j][i])
+            else :
+                bita_1=-c_1+c_17*np.exp(-c_19*(-s_V[j-1][i]-c_18)/E_N[j-1][i])
             s_N_bound[j][i]=E_mod[j][i]*k_1*bita_1*np.exp(-(e_N[j][i]-bita_1*c_2*k_1)/(-c_4*e_elastic[j][i]+k_1*c_3))
             if s_N[j][i] > s_N_bound[j][i]: 
                 s_N[j][i]=np.max([np.min([s_N[j][i],s_N_bound[j][i]]),s_V_bound[j][i]+s_D_bound[j][i]])
@@ -210,13 +226,29 @@ for j in range(n_step):
             s_T_bound[j][i]=(c_10*(s_Ndot[j][i]-s_N[j][i])**(-1)+(E_T[j][i]*k_1-k_2)**(-1))**(-1)
         else:
             s_T_bound[j][i]=(c_10*s_Ndot[j][i]**(-1)+(E_T[j][i]*k_1-k_2)**(-1))**(-1)
-            s_T_elastic[j][i]=s_T[j-1][i] +E_T[j][i]*de_tr[j][i]
-            s_T[j][i]=np.minimum(s_T_bound[j][i],np.abs(s_T_elastic[i]))
-            s_T[j][i]=(s_T[j-1][i]+E_T[j][i]*de_tr[j][i])*s_T[j][i]/s_T_elastic[j][i]
-    s_V[j,:]=np.einsum('...i,i',s_N,IntegScheme.MPW)
-    K_b[j]=(2/3)*np.einsum("n,...i",IntegScheme.MPW,E_N[j,:])
-    
+            s_T_elastic[j][i]=s_T[j-1][i] +E_T[j][i]*de_tr[j-1][i]
+            s_T[j][i]=np.minimum(s_T_bound[j][i],np.abs(s_T_elastic[j][i]))
+            s_T[j][i]=(s_T[j-1][i]+E_T[j][i]*de_tr[j-1][i])*s_T[j][i]/s_T_elastic[j][i]
+        if (s_V[j][i]-s_V[j][i]) > 1e-20:
+             de_vel[j-1][i]=(s_V[j][i]-s_V[j][i])*(K_b[j]**-1)
+             dzita[j][i]=np.abs(de_v[j-1][i]-de_vel[j-1][i])
+        else :
+            dzita[j][i]=0
+    s_V[j,:]=np.einsum('...i,i',s_N[j],IntegScheme.MPW)
+    K_b[j]=(2/3)*np.einsum("...n,...n->...",IntegScheme.MPW,E_N[j])
 
+microplane = 3 #46°
+cm = 1 / 2.54  # centimeters in inches
+plt.figure(figsize=(30*cm, 15*cm))
+plt.subplot(121)
+plt.plot(e_V[:, microplane], s_V[:, microplane], 'k')
+plt.title(r'$\sigma_V$', fontsize=25)
+plt.tick_params(axis='both', which='major', labelsize=25)
+
+plt.subplot(122)
+plt.plot(np.linalg.norm(e_T_r[:, microplane],axis=-1), np.linalg.norm(s_T[:, microplane],axis=-1), 'k')
+plt.title(r'$\sigma_T$', fontsize=25)
+plt.tick_params(axis='both', which='major', labelsize=25)
 # if split==True:
 #         sigma_ij= (     np.einsum('i,ij',s_V,delta)+np.einsum('d,...d,na,nb->...ab',
 #                                   IntegScheme.MPW, s_D, IntegScheme.MPN, IntegScheme.MPN) +
@@ -238,8 +270,7 @@ for j in range(n_step):
 #                                           IntegScheme.MPW, s_T_r, IntegScheme.MPN, delta)
 #                         )
 #                 )
-
-            
+debugger; 
 
 
 
